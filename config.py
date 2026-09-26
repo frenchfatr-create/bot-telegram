@@ -60,3 +60,4 @@ def register_bot_id(bot_id: int, channels: list[str | int]):
 
 def get_channels_for_bot(bot_id: int) -> list[str | int]:
     return BOT_ID_TO_CHANNELS.get(bot_id, [])
+
