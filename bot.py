@@ -18,7 +18,8 @@ from aiogram.types import TelegramObject, Message, CallbackQuery
 
 import config
 import database
-from handlers import user, admin
+import user
+import admin
 
 logging.basicConfig(
     level=logging.INFO,
