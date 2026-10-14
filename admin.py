@@ -72,10 +72,15 @@ async def reply_to_submission_author(message: Message, bot: Bot):
     try:
         if message.text:
             await bot.send_message(submission["user_id"], f"💬 <b>Ответ администрации на вашу предложку:</b>\n\n{escape(message.text)}", parse_mode="HTML")
-        elif message.caption:
-            await bot.send_message(submission["user_id"], f"💬 <b>Ответ администрации на вашу предложку:</b>\n\n{escape(message.caption)}", parse_mode="HTML")
+        elif message.caption or message.photo or message.video or message.document or message.animation or message.audio or message.voice or message.video_note or message.sticker:
+            await bot.send_message(submission["user_id"], "💬 <b>Ответ администрации на вашу предложку:</b>", parse_mode="HTML")
+            await bot.copy_message(
+                chat_id=submission["user_id"],
+                from_chat_id=message.chat.id,
+                message_id=message.message_id,
+            )
         else:
-            await message.reply("Пока можно отправить ответ пользователю текстом или подписью к медиа.")
+            await message.reply("Этот тип сообщения нельзя отправить как ответ. Отправьте текст или медиа.")
             return
         await message.reply(f"✅ Ответ доставлен пользователю <code>{submission['user_id']}</code>.", parse_mode="HTML")
     except Exception as e:
