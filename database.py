@@ -75,6 +75,13 @@ async def add_submission(user_id: int, user_message_id: int, bot_id: int = 0, ta
         return int(cursor.lastrowid)
 
 
+async def delete_pending_submission(sub_id: int) -> None:
+    """Delete only an unmoderated submission that could not be delivered to admins."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute("DELETE FROM submissions WHERE id = ? AND status = 'pending' AND admin_message_id IS NULL", (sub_id,))
+        await db.commit()
+
+
 async def set_admin_message_id(sub_id: int, admin_message_id: int) -> None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("UPDATE submissions SET admin_message_id = ? WHERE id = ?", (admin_message_id, sub_id))
@@ -125,6 +132,16 @@ async def unban_user(user_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+async def rollback_submission_rate_limit(user_id: int, expected_timestamp: float) -> None:
+    """Remove a just-created rate-limit reservation only if it is still ours."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "DELETE FROM user_rate_limits WHERE user_id = ? AND last_submission_at = ?",
+            (user_id, expected_timestamp),
+        )
+        await db.commit()
+
+
 async def check_and_mark_submission(user_id: int, now: float, interval: int = 60):
     """Atomic persistent rate limit: return (allowed, seconds_left)."""
     async with aiosqlite.connect(DATABASE_PATH) as db:
@@ -161,6 +178,17 @@ async def get_awaiting_appeal(user_id: int) -> Optional[Dict[str, Any]]:
 async def submit_appeal(appeal_id: int, appeal_text: str) -> None:
     async with aiosqlite.connect(DATABASE_PATH) as db:
         await db.execute("UPDATE appeals SET appeal_text=?, status='pending', updated_at=CURRENT_TIMESTAMP WHERE id=? AND status='awaiting_text'", (appeal_text, appeal_id))
+        await db.commit()
+
+
+async def reset_appeal_for_retry(appeal_id: int) -> None:
+    """Allow the user to retry sending an appeal if admin delivery failed."""
+    async with aiosqlite.connect(DATABASE_PATH) as db:
+        await db.execute(
+            "UPDATE appeals SET status='awaiting_text', appeal_text=NULL, updated_at=CURRENT_TIMESTAMP "
+            "WHERE id=? AND status='pending'",
+            (appeal_id,),
+        )
         await db.commit()
 
 
