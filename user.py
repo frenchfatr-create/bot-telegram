@@ -79,18 +79,25 @@ async def handle_private_message(message: Message, bot: Bot):
             return
         await database.submit_appeal(pending_appeal["id"], appeal_text)
         username = f"@{escape(user.username)}" if user.username else "не указан"
-        appeal_msg = await bot.send_message(
-            chat_id=config.ADMIN_CHAT_ID,
-            text=(f"📝 <b>Обжалование блокировки #{pending_appeal['id']}</b>\n"
-                  f"Пользователь: {escape(user.full_name)}\nUsername: {username}\n"
-                  f"Telegram ID: <code>{user.id}</code>\n\n"
-                  f"<b>Причина обращения:</b>\n{escape(appeal_text)}"),
-            parse_mode="HTML", reply_markup=get_appeal_moderation_keyboard(pending_appeal["id"]))
-        await database.set_appeal_admin_message_id(pending_appeal["id"], appeal_msg.message_id)
+        try:
+            appeal_msg = await bot.send_message(
+                chat_id=config.ADMIN_CHAT_ID,
+                text=(f"📝 <b>Обжалование блокировки #{pending_appeal['id']}</b>\n"
+                      f"Пользователь: {escape(user.full_name)}\nUsername: {username}\n"
+                      f"Telegram ID: <code>{user.id}</code>\n\n"
+                      f"<b>Причина обращения:</b>\n{escape(appeal_text)}"),
+                parse_mode="HTML", reply_markup=get_appeal_moderation_keyboard(pending_appeal["id"]))
+            await database.set_appeal_admin_message_id(pending_appeal["id"], appeal_msg.message_id)
+        except Exception:
+            logger.exception("Не удалось доставить обжалование #%s администраторам", pending_appeal["id"])
+            await database.reset_appeal_for_retry(pending_appeal["id"])
+            await message.answer("⚠️ Не удалось передать обжалование администраторам. Попробуйте отправить его ещё раз позже.")
+            return
         await message.answer("✅ Обжалование отправлено администраторам. Ожидайте решения.")
         return
 
-    allowed, seconds_left = await database.check_and_mark_submission(user.id, time.time(), 60)
+    submission_timestamp = time.time()
+    allowed, seconds_left = await database.check_and_mark_submission(user.id, submission_timestamp, 60)
     if not allowed:
         await message.answer(f"⏳ Антиспам: отправлять предложку можно раз в минуту. Подождите ещё {seconds_left} сек.")
         return
@@ -102,6 +109,7 @@ async def handle_private_message(message: Message, bot: Bot):
         sub_id = await database.add_submission(user.id, message.message_id, bot.id, target_str)
     except Exception:
         logger.exception("Ошибка сохранения предложки в БД")
+        await database.rollback_submission_rate_limit(user.id, submission_timestamp)
         await message.answer("⚠️ Не удалось сохранить предложку. Попробуйте позже.")
         return
 
@@ -129,7 +137,10 @@ async def handle_private_message(message: Message, bot: Bot):
                 logger.exception("Не удалось отправить предложку в резервный чат")
 
     if not admin_msg:
-        await message.answer("⚠️ Не удалось доставить предложку администраторам. Проверьте ADMIN_CHAT_ID и права бота.")
+        # Remove the incomplete submission and release the rate-limit reservation so a retry is possible.
+        await database.delete_pending_submission(sub_id)
+        await database.rollback_submission_rate_limit(user.id, submission_timestamp)
+        await message.answer("⚠️ Не удалось доставить предложку администраторам. Проверьте ADMIN_CHAT_ID и права бота, затем попробуйте снова.")
         return
 
     await database.set_admin_message_id(sub_id, admin_msg.message_id)
